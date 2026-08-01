@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>OptiQR — Optical File Bridge</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<style>
+  :root{
+    --bg:#090C11;
+    --surface:#121822;
+    --surface-2:#1A2230;
+    --line:#232D3D;
+    --text:#E8ECF3;
+    --muted:#7C8AA0;
+    --signal:#26F0B0;
+    --signal-dim:#0F5C48;
+    --alert:#FF3D6E;
+    --amber:#FFB627;
+    --mono:'JetBrains Mono','SF Mono',Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+    min-height:100vh;overscroll-behavior:none;}
+  body{display:flex;flex-direction:column;align-items:stretch;}
+
+  /* ---------- top bar ---------- */
+  header{padding:18px 20px 14px;border-bottom:1px solid var(--line);}
+  .brand{display:flex;align-items:baseline;gap:10px;}
+  .brand-mark{font-family:var(--mono);font-size:13px;letter-spacing:.18em;color:var(--signal);
+    border:1px solid var(--signal-dim);padding:3px 7px;border-radius:3px;}
+  .brand h1{font-size:19px;margin:0;font-weight:650;letter-spacing:-0.01em;}
+  .brand-sub{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:4px;letter-spacing:.02em;}
+
+  /* ---------- mode switch ---------- */
+  .switch{display:flex;margin:16px 20px 0;background:var(--surface);border:1px solid var(--line);
+    border-radius:10px;padding:4px;gap:4px;}
+  .switch button{flex:1;padding:10px 8px;border:none;background:transparent;color:var(--muted);
+    font-family:var(--mono);font-size:12.5px;letter-spacing:.06em;border-radius:7px;cursor:pointer;
+    text-transform:uppercase;transition:background .15s, color .15s;}
+  .switch button.active{background:var(--surface-2);color:var(--signal);}
+
+  main{flex:1;padding:18px 20px 40px;display:flex;flex-direction:column;gap:16px;max-width:560px;
+    margin:0 auto;width:100%;}
+  .view{display:none;flex-direction:column;gap:16px;}
+  .view.active{display:flex;}
+
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;}
+  .panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);
+    margin:0 0 12px;font-weight:600;}
+
+  /* ---------- file picker ---------- */
+  .drop{border:1.5px dashed var(--line);border-radius:12px;padding:28px 16px;text-align:center;
+    cursor:pointer;transition:border-color .15s,background .15s;}
+  .drop:active{background:var(--surface-2);}
+  .drop.has-file{border-style:solid;border-color:var(--signal-dim);}
+  .drop-label{font-size:14px;color:var(--text);margin-bottom:4px;}
+  .drop-sub{font-family:var(--mono);font-size:11.5px;color:var(--muted);}
+  input[type=file]{display:none;}
+
+  /* ---------- sliders ---------- */
+  .field{margin-top:14px;}
+  .field label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-bottom:6px;}
+  .field label span.val{font-family:var(--mono);color:var(--signal);}
+  input[type=range]{width:100%;accent-color:var(--signal);}
+
+  /* ---------- buttons ---------- */
+  .btn{width:100%;padding:14px;border-radius:10px;border:none;font-family:var(--mono);font-size:13px;
+    letter-spacing:.08em;text-transform:uppercase;cursor:pointer;font-weight:600;}
+  .btn-primary{background:var(--signal);color:#04120D;}
+  .btn-primary:disabled{background:var(--surface-2);color:var(--muted);cursor:not-allowed;}
+  .btn-stop{background:var(--alert);color:#210008;}
+
+  /* ---------- viewfinder / stage ---------- */
+  .stage{position:relative;aspect-ratio:1/1;background:#000;border-radius:16px;overflow:hidden;
+    border:1px solid var(--line);}
+  .stage canvas, .stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+    background:#fff;}
+  #recvVideo{object-fit:cover;background:#000;}
+  .reticle{position:absolute;inset:14px;pointer-events:none;}
+  .reticle::before,.reticle::after,.reticle .r2,.reticle .r3{content:'';position:absolute;width:22px;height:22px;
+    border-color:var(--signal);}
+  .corner{position:absolute;width:22px;height:22px;border-color:var(--signal);opacity:.85;}
+  .corner.tl{top:0;left:0;border-top:3px solid var(--signal);border-left:3px solid var(--signal);border-radius:4px 0 0 0;}
+  .corner.tr{top:0;right:0;border-top:3px solid var(--signal);border-right:3px solid var(--signal);border-radius:0 4px 0 0;}
+  .corner.bl{bottom:0;left:0;border-bottom:3px solid var(--signal);border-left:3px solid var(--signal);border-radius:0 0 0 4px;}
+  .corner.br{bottom:0;right:0;border-bottom:3px solid var(--signal);border-right:3px solid var(--signal);border-radius:0 0 4px 0;}
+  .sweep{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--signal),transparent);
+    top:0;opacity:0;}
+  .sweep.active{animation:sweep 1.6s linear infinite;opacity:.9;}
+  @keyframes sweep{0%{top:2%;}100%{top:98%;}}
+
+  .hud{position:absolute;left:10px;bottom:10px;right:10px;display:flex;justify-content:space-between;
+    font-family:var(--mono);font-size:10.5px;color:var(--signal);text-shadow:0 1px 4px #000;pointer-events:none;}
+  .hud-badge{position:absolute;top:10px;right:10px;font-family:var(--mono);font-size:10px;padding:3px 7px;
+    border-radius:4px;background:rgba(0,0,0,.55);color:var(--muted);}
+
+  /* ---------- stats ---------- */
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .stat{background:var(--surface-2);border-radius:10px;padding:10px 12px;}
+  .stat .k{font-family:var(--mono);font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;}
+  .stat .v{font-family:var(--mono);font-size:17px;color:var(--text);margin-top:3px;}
+  .stat .v.signal{color:var(--signal);}
+
+  .progress-track{height:8px;background:var(--surface-2);border-radius:5px;overflow:hidden;margin-top:2px;}
+  .progress-fill{height:100%;background:var(--signal);width:0%;transition:width .2s ease;}
+
+  .log{font-family:var(--mono);font-size:11px;color:var(--muted);max-height:74px;overflow-y:auto;
+    background:var(--surface-2);border-radius:8px;padding:8px 10px;line-height:1.6;}
+
+  .banner{display:none;padding:10px 12px;border-radius:9px;font-size:12.5px;font-family:var(--mono);
+    align-items:center;gap:8px;}
+  .banner.show{display:flex;}
+  .banner.ok{background:rgba(38,240,176,.1);color:var(--signal);border:1px solid var(--signal-dim);}
+  .banner.err{background:rgba(255,61,110,.1);color:var(--alert);border:1px solid rgba(255,61,110,.3);}
+
+  a.download-link{display:none;}
+
+  footer{padding:14px 20px 26px;text-align:center;font-family:var(--mono);font-size:10.5px;color:var(--muted);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="brand-mark">OPTIQR</span>
+    <h1>Optical File Bridge</h1>
+  </div>
+  <div class="brand-sub">screen → camera · systematic fountain coding · CRC32-verified · no network required</div>
+</header>
+
+<div class="switch">
+  <button id="tabSend" class="active">Send</button>
+  <button id="tabRecv">Receive</button>
+</div>
+
+<main>
+
+  <!-- ================= SENDER ================= -->
+  <div id="viewSend" class="view active">
+
+    <div class="panel">
+      <h2>1 · File</h2>
+      <div class="drop" id="dropZone">
+        <div class="drop-label" id="dropLabel">Tap to choose a file</div>
+        <div class="drop-sub" id="dropSub">up to 150 MB · stays on this device</div>
+      </div>
+      <input type="file" id="fileInput">
+
+      <div class="field">
+        <label>Block payload <span class="val" id="blockSizeVal">350 B</span></label>
+        <input type="range" id="blockSizeSlider" min="120" max="900" step="10" value="350">
+      </div>
+      <div class="field">
+        <label>Frame rate <span class="val" id="fpsVal">12 fps</span></label>
+        <input type="range" id="fpsSlider" min="4" max="24" step="1" value="12">
+      </div>
+      <div class="field">
+        <label>Error correction <span class="val" id="eclVal">M</span></label>
+        <input type="range" id="eclSlider" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="field">
+        <label>Codes per frame <span class="val" id="gridVal">2 × 2 — 4 codes</span></label>
+        <input type="range" id="gridSlider" min="1" max="3" step="1" value="2">
+        <div class="drop-sub" style="margin-top:6px;">more codes = higher throughput, but the receiver needs steadier framing to keep the whole grid in view</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>2 · Broadcast</h2>
+      <div class="stage" id="sendStage">
+        <canvas id="qrCanvas"></canvas>
+        <div class="reticle"><div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div></div>
+        <div class="sweep" id="sendSweep"></div>
+        <div class="hud-badge" id="sendBadge">idle</div>
+        <div class="hud"><span id="sendFrameCount">frame 0</span><span id="sendThroughput">0 KB/s</span></div>
+      </div>
+
+      <div class="stats" style="margin-top:12px;">
+        <div class="stat"><div class="k">Blocks (K)</div><div class="v" id="statK">—</div></div>
+        <div class="stat"><div class="k">Coverage</div><div class="v signal" id="statCoverage">0%</div></div>
+      </div>
+
+      <button class="btn btn-primary" id="sendToggle" style="margin-top:14px;" disabled>Choose a file first</button>
+    </div>
+  </div>
+
+  <!-- ================= RECEIVER ================= -->
+  <div id="viewRecv" class="view">
+
+    <div class="panel">
+      <h2>Camera</h2>
+      <div class="stage">
+        <video id="recvVideo" autoplay playsinline muted></video>
+        <canvas id="recvOverlay" style="display:none;"></canvas>
+        <div class="reticle"><div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div></div>
+        <div class="sweep" id="recvSweep"></div>
+        <div class="hud-badge" id="recvBadge">camera off</div>
+        <div class="hud"><span id="recvFrameCount">0 symbols</span><span id="recvThroughput">0 KB/s</span></div>
+      </div>
+      <button class="btn btn-primary" id="recvToggle" style="margin-top:14px;">Start camera</button>
+    </div>
+
+    <div class="panel">
+      <h2>Reconstruction</h2>
+      <div id="recvBannerOk" class="banner ok"><span>✓</span><span id="recvOkText">Transfer complete</span></div>
+      <div id="recvBannerErr" class="banner err"><span>!</span><span id="recvErrText"></span></div>
+
+      <div class="stats">
+        <div class="stat"><div class="k">File</div><div class="v" id="statFile" style="font-size:13px;">—</div></div>
+        <div class="stat"><div class="k">Size</div><div class="v" id="statSize">—</div></div>
+        <div class="stat"><div class="k">Blocks solved</div><div class="v" id="statSolved">0 / 0</div></div>
+        <div class="stat"><div class="k">Redundancy used</div><div class="v" id="statRedundancy">0%</div></div>
+      </div>
+      <div class="progress-track" style="margin-top:12px;"><div class="progress-fill" id="recvProgress"></div></div>
+
+      <div class="log" id="recvLog" style="margin-top:12px;">waiting for first frame…</div>
+
+      <a class="download-link" id="downloadLink"></a>
+    </div>
+  </div>
+
+</main>
+
+<footer>fountain-coded optical transfer · runs entirely in-browser · no data leaves the two devices</footer>
+
+<script>
+/* =========================================================================
+   SHARED: PRNG + degree distribution + index selection
+   Sender and receiver both call these with identical inputs (K, seed) and
+   must always produce identical results — this is the entire contract that
+   makes the fountain code work without transmitting index lists.
+   ========================================================================= */
+
+function mulberry32(seed){
+  let t = seed >>> 0;
+  return function(){
+    t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const _solitonCache = new Map();
+function solitonCDF(K){
+  if (_solitonCache.has(K)) return _solitonCache.get(K);
+  const c = 0.05, delta = 0.05;
+  const rho = new Float64Array(K + 1);
+  rho[1] = 1 / K;
+  for (let i = 2; i <= K; i++) rho[i] = 1 / (i * (i - 1));
+
+  const R = Math.max(1, c * Math.log(K / delta) * Math.sqrt(K));
+  const tau = new Float64Array(K + 1);
+  const limit = Math.max(1, Math.min(K - 1, Math.round(K / R)));
+  for (let i = 1; i < limit; i++) tau[i] = R / (K * i);
+  tau[limit] = R * Math.log(R / delta) / K;
+
+  const mu = new Float64Array(K + 1);
+  let sum = 0;
+  for (let i = 1; i <= K; i++){ mu[i] = rho[i] + tau[i]; sum += mu[i]; }
+
+  const cdf = new Float64Array(K + 1);
+  let acc = 0;
+  for (let i = 1; i <= K; i++){ acc += mu[i] / sum; cdf[i] = acc; }
+  _solitonCache.set(K, cdf);
+  return cdf;
+}
+
+function pickIndices(K, seed){
+  // Systematic phase (Raptor-style): the first K symbols ARE the raw blocks,
+  // unencoded, in order. This means a lossless transfer needs exactly K
+  // frames with zero decode overhead -- overhead only appears in the repair
+  // symbols that follow, which is what makes real-world Raptor/RaptorQ codes
+  // so much more efficient than plain LT in the common (low-loss) case.
+  if (seed < K) return [seed];
+  const rng = mulberry32(seed);
+  if (K <= 1) return [0];
+  const cdf = solitonCDF(K);
+  const r = rng();
+  let d = K;
+  for (let i = 1; i <= K; i++){ if (cdf[i] >= r){ d = i; break; } }
+  d = Math.max(1, Math.min(d, K));
+  const chosen = new Set();
+  let guard = 0;
+  while (chosen.size < d && guard < d * 50 + 100){
+    chosen.add(Math.floor(rng() * K));
+    guard++;
+  }
+  return Array.from(chosen);
+}
+
+function xorInto(dst, src){
+  for (let i = 0; i < dst.length; i++) dst[i] ^= src[i];
+}
+
+/* Standard CRC-32 (IEEE 802.3 polynomial), used to verify the whole
+   reassembled file matches the original -- the same belt-and-suspenders
+   check UR/BBQr-style protocols use, since a rare pathological XOR
+   collision in the peeling decoder could otherwise go unnoticed. */
+const _crcTable = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++){
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes){
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = _crcTable[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/* =========================================================================
+   PACKET FORMAT
+   magic(2) version(1) fileId(4) K(4) blockSize(4) fileSize(4) fileCRC32(4)
+   gridSize(1) filenameLen(1) filename(n) seed(4) payload(blockSize)
+   ========================================================================= */
+
+const MAGIC0 = 0xF9, MAGIC1 = 0x51;
+
+function buildPacket({fileId, K, blockSize, fileSize, fileCRC32, filename, gridSize, seed, payload}){
+  const nameBytes = new TextEncoder().encode(filename.slice(0, 255));
+  const headerLen = 2+1+4+4+4+4+4+1+1+nameBytes.length+4;
+  const buf = new Uint8Array(headerLen + payload.length);
+  const dv = new DataView(buf.buffer);
+  let o = 0;
+  buf[o++] = MAGIC0; buf[o++] = MAGIC1;
+  buf[o++] = 1; // version
+  dv.setUint32(o, fileId); o += 4;
+  dv.setUint32(o, K); o += 4;
+  dv.setUint32(o, blockSize); o += 4;
+  dv.setUint32(o, fileSize); o += 4;
+  dv.setUint32(o, fileCRC32); o += 4;
+  buf[o++] = gridSize;
+  buf[o++] = nameBytes.length;
+  buf.set(nameBytes, o); o += nameBytes.length;
+  dv.setUint32(o, seed); o += 4;
+  buf.set(payload, o);
+  return buf;
+}
+
+function parsePacket(buf){
+  if (buf.length < 29) return null;
+  if (buf[0] !== MAGIC0 || buf[1] !== MAGIC1) return null;
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let o = 3;
+  const fileId = dv.getUint32(o); o += 4;
+  const K = dv.getUint32(o); o += 4;
+  const blockSize = dv.getUint32(o); o += 4;
+  const fileSize = dv.getUint32(o); o += 4;
+  const fileCRC32 = dv.getUint32(o); o += 4;
+  const gridSize = buf[o]; o += 1;
+  const nameLen = buf[o]; o += 1;
+  if (gridSize < 1 || gridSize > 4) return null;
+  const filename = new TextDecoder().decode(buf.slice(o, o + nameLen)); o += nameLen;
+  const seed = dv.getUint32(o); o += 4;
+  const payload = buf.slice(o, o + blockSize);
+  if (payload.length !== blockSize) return null;
+  return {fileId, K, blockSize, fileSize, fileCRC32, filename, gridSize, seed, payload};
+}
+
+function bytesToBase64(bytes){
+  let binary = '';
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk){
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+function base64ToBytes(b64){
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/* =========================================================================
+   FOUNTAIN DECODER (peeling / belief propagation)
+   ========================================================================= */
+
+class FountainDecoder{
+  constructor(K, blockSize, fileSize, filename, expectedCRC32){
+    this.K = K; this.blockSize = blockSize; this.fileSize = fileSize; this.filename = filename;
+    this.expectedCRC32 = expectedCRC32;
+    this.blocks = new Array(K).fill(null);
+    this.solved = 0;
+    this.pending = [];
+    this.seenSeeds = new Set();
+    this.symbolsReceived = 0;
+  }
+  addSymbol(seed, indices, payload){
+    if (this.seenSeeds.has(seed)) return 'dup';
+    this.seenSeeds.add(seed);
+    this.symbolsReceived++;
+
+    const idxSet = new Set(indices);
+    const data = payload.slice();
+    for (const idx of Array.from(idxSet)){
+      if (this.blocks[idx]){ xorInto(data, this.blocks[idx]); idxSet.delete(idx); }
+    }
+    if (idxSet.size === 0) return 'redundant';
+    if (idxSet.size === 1){
+      const idx = idxSet.values().next().value;
+      this._setBlock(idx, data);
+    } else {
+      this.pending.push({indices: idxSet, data});
+    }
+    this._reduce();
+    return 'new';
+  }
+  _setBlock(idx, data){
+    if (this.blocks[idx]) return;
+    this.blocks[idx] = data;
+    this.solved++;
+  }
+  _reduce(){
+    let progress = true;
+    while (progress){
+      progress = false;
+      for (let i = this.pending.length - 1; i >= 0; i--){
+        const sym = this.pending[i];
+        for (const idx of Array.from(sym.indices)){
+          if (this.blocks[idx]){ xorInto(sym.data, this.blocks[idx]); sym.indices.delete(idx); }
+        }
+        if (sym.indices.size === 0){
+          this.pending.splice(i, 1);
+        } else if (sym.indices.size === 1){
+          const idx = sym.indices.values().next().value;
+          this._setBlock(idx, sym.data);
+          this.pending.splice(i, 1);
+          progress = true;
+        }
+      }
+    }
+  }
+  isComplete(){ return this.solved === this.K; }
+  assemble(){
+    const out = new Uint8Array(this.K * this.blockSize);
+    for (let i = 0; i < this.K; i++) out.set(this.blocks[i], i * this.blockSize);
+    return out.slice(0, this.fileSize);
+  }
+  verifyIntegrity(assembled){
+    return crc32(assembled) === this.expectedCRC32;
+  }
+}
+
+/* =========================================================================
+   UI: tab switching
+   ========================================================================= */
+
+const tabSend = document.getElementById('tabSend');
+const tabRecv = document.getElementById('tabRecv');
+const viewSend = document.getElementById('viewSend');
+const viewRecv = document.getElementById('viewRecv');
+
+tabSend.onclick = () => { tabSend.classList.add('active'); tabRecv.classList.remove('active');
+  viewSend.classList.add('active'); viewRecv.classList.remove('active'); stopReceiving(); };
+tabRecv.onclick = () => { tabRecv.classList.add('active'); tabSend.classList.remove('active');
+  viewRecv.classList.add('active'); viewSend.classList.remove('active'); stopSending(); };
+
+/* =========================================================================
+   SENDER
+   ========================================================================= */
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const dropLabel = document.getElementById('dropLabel');
+const dropSub = document.getElementById('dropSub');
+const blockSizeSlider = document.getElementById('blockSizeSlider');
+const blockSizeVal = document.getElementById('blockSizeVal');
+const fpsSlider = document.getElementById('fpsSlider');
+const fpsVal = document.getElementById('fpsVal');
+const eclSlider = document.getElementById('eclSlider');
+const eclVal = document.getElementById('eclVal');
+const gridSlider = document.getElementById('gridSlider');
+const gridVal = document.getElementById('gridVal');
+const sendToggle = document.getElementById('sendToggle');
+const qrCanvas = document.getElementById('qrCanvas');
+const sendBadge = document.getElementById('sendBadge');
+const sendSweep = document.getElementById('sendSweep');
+const sendFrameCount = document.getElementById('sendFrameCount');
+const sendThroughput = document.getElementById('sendThroughput');
+const statK = document.getElementById('statK');
+const statCoverage = document.getElementById('statCoverage');
+
+const ECL = ['L','M','Q','H'];
+
+let selectedFile = null;
+let paddedBytes = null;
+let K = 0, blockSize = 350, fileId = 0, fileCRC32 = 0;
+let sendTimer = null;
+let frameCounter = 0;
+let sendStartTime = 0;
+let bytesEmittedSinceStart = 0;
+
+blockSizeSlider.oninput = () => { blockSize = parseInt(blockSizeSlider.value,10); blockSizeVal.textContent = blockSize + ' B'; if (selectedFile) prepareFile(); };
+fpsSlider.oninput = () => { fpsVal.textContent = fpsSlider.value + ' fps'; if (sendTimer) restartLoop(); };
+eclSlider.oninput = () => { eclVal.textContent = ECL[eclSlider.value]; };
+gridSlider.oninput = () => {
+  const g = parseInt(gridSlider.value,10);
+  gridVal.textContent = g + ' × ' + g + ' — ' + (g*g) + ' code' + (g*g>1?'s':'');
+};
+
+dropZone.onclick = () => fileInput.click();
+fileInput.onchange = (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (f.size > 150*1024*1024){ alert('File is larger than 150 MB — pick something smaller.'); return; }
+  selectedFile = f;
+  dropZone.classList.add('has-file');
+  dropLabel.textContent = f.name;
+  dropSub.textContent = (f.size/1024/1024).toFixed(2) + ' MB';
+  prepareFile();
+};
+
+function prepareFile(){
+  const reader = new FileReader();
+  reader.onload = () => {
+    const raw = new Uint8Array(reader.result);
+    K = Math.max(1, Math.ceil(raw.length / blockSize));
+    paddedBytes = new Uint8Array(K * blockSize);
+    paddedBytes.set(raw, 0);
+    fileCRC32 = crc32(raw);
+    fileId = Math.floor(Math.random() * 0xFFFFFFFF);
+    statK.textContent = K.toLocaleString();
+    statCoverage.textContent = '0%';
+    sendToggle.disabled = false;
+    sendToggle.textContent = 'Start broadcast';
+    if (K > 25000){
+      alert('That file needs ' + K.toLocaleString() + ' blocks at this block size — increase "Block payload" for smoother decoding.');
+    }
+  };
+  reader.readAsArrayBuffer(selectedFile);
+}
+
+sendToggle.onclick = () => {
+  if (sendTimer) stopSending(); else startSending();
+};
+
+function startSending(){
+  if (!paddedBytes) return;
+  frameCounter = 0;
+  symbolsSentTotal = 0;
+  sendStartTime = performance.now();
+  bytesEmittedSinceStart = 0;
+  sendBadge.textContent = 'broadcasting';
+  sendSweep.classList.add('active');
+  sendToggle.textContent = 'Stop broadcast';
+  sendToggle.classList.add('btn-stop');
+  restartLoop();
+}
+
+function restartLoop(){
+  if (sendTimer) clearInterval(sendTimer);
+  const fps = parseInt(fpsSlider.value,10);
+  sendTimer = setInterval(emitFrame, Math.round(1000/fps));
+}
+
+function stopSending(){
+  if (sendTimer){ clearInterval(sendTimer); sendTimer = null; }
+  sendBadge.textContent = 'idle';
+  sendSweep.classList.remove('active');
+  sendToggle.textContent = 'Start broadcast';
+  sendToggle.classList.remove('btn-stop');
+}
+
+let symbolsSentTotal = 0;
+
+function emitFrame(){
+  const grid = parseInt(gridSlider.value,10);
+  const cellsPerFrame = grid*grid;
+  const texts = [];
+  for (let c=0;c<cellsPerFrame;c++){
+    const seed = frameCounter*cellsPerFrame + c;
+    const indices = pickIndices(K, seed);
+    const payload = new Uint8Array(blockSize);
+    for (const idx of indices){
+      const start = idx * blockSize;
+      for (let i=0;i<blockSize;i++) payload[i] ^= paddedBytes[start+i];
+    }
+    const packet = buildPacket({
+      fileId, K, blockSize, fileSize: selectedFile.size, fileCRC32,
+      filename: selectedFile.name, gridSize: grid, seed, payload
+    });
+    texts.push(bytesToBase64(packet));
+    bytesEmittedSinceStart += packet.length;
+  }
+  drawGrid(texts, grid);
+
+  frameCounter++;
+  symbolsSentTotal += cellsPerFrame;
+  const elapsed = (performance.now() - sendStartTime) / 1000;
+  const kbps = elapsed > 0 ? (bytesEmittedSinceStart/1024/elapsed) : 0;
+  sendFrameCount.textContent = symbolsSentTotal.toLocaleString() + ' symbols';
+  sendThroughput.textContent = kbps.toFixed(1) + ' KB/s';
+  const coveragePct = Math.min(100, (symbolsSentTotal / K) * 100);
+  statCoverage.textContent = coveragePct.toFixed(0) + '%';
+}
+
+function drawGrid(texts, grid){
+  const size = qrCanvas.parentElement.clientWidth;
+  qrCanvas.width = size; qrCanvas.height = size;
+  const ctx = qrCanvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0,0,size,size);
+
+  const ecl = ECL[eclSlider.value];
+  const cellOuter = size / grid;
+  const pad = cellOuter * 0.06; // quiet-zone margin so cells stay distinguishable to the camera
+
+  for (let i=0;i<texts.length;i++){
+    const row = Math.floor(i/grid), col = i%grid;
+    const ox = col*cellOuter + pad;
+    const oy = row*cellOuter + pad;
+    const inner = cellOuter - pad*2;
+
+    const qr = qrcode(0, ecl);
+    qr.addData(texts[i]);
+    qr.make();
+    const count = qr.getModuleCount();
+    const cell = inner / count;
+    ctx.fillStyle = '#000000';
+    for (let r=0;r<count;r++){
+      for (let c=0;c<count;c++){
+        if (qr.isDark(r,c)) ctx.fillRect(
+          Math.round(ox + c*cell), Math.round(oy + r*cell),
+          Math.ceil(cell), Math.ceil(cell)
+        );
+      }
+    }
+  }
+}
+
+/* =========================================================================
+   RECEIVER
+   ========================================================================= */
+
+const recvVideo = document.getElementById('recvVideo');
+const recvOverlay = document.getElementById('recvOverlay');
+const recvToggle = document.getElementById('recvToggle');
+const recvBadge = document.getElementById('recvBadge');
+const recvSweep = document.getElementById('recvSweep');
+const recvFrameCount = document.getElementById('recvFrameCount');
+const recvThroughput = document.getElementById('recvThroughput');
+const statFile = document.getElementById('statFile');
+const statSize = document.getElementById('statSize');
+const statSolved = document.getElementById('statSolved');
+const statRedundancy = document.getElementById('statRedundancy');
+const recvProgress = document.getElementById('recvProgress');
+const recvLog = document.getElementById('recvLog');
+const recvBannerOk = document.getElementById('recvBannerOk');
+const recvBannerErr = document.getElementById('recvBannerErr');
+const recvOkText = document.getElementById('recvOkText');
+const recvErrText = document.getElementById('recvErrText');
+const downloadLink = document.getElementById('downloadLink');
+
+let stream = null;
+let scanLoopId = null;
+let decoder = null;
+let currentFileId = null;
+let symbolsAtStart = 0;
+let scanStartTime = 0;
+let complete = false;
+let detectedGrid = null;   // null until we've decoded one packet and learned the real grid size
+let lastProcessTime = 0;
+const MIN_PROCESS_INTERVAL_MS = 55; // throttle jsQR work regardless of grid size
+let nativeDetector = null; // set if the browser exposes a hardware-accelerated QR detector
+let detectorEngine = 'jsQR';
+
+async function initDetector(){
+  nativeDetector = null;
+  detectorEngine = 'jsQR';
+  if (!('BarcodeDetector' in window)) return;
+  try{
+    const formats = await BarcodeDetector.getSupportedFormats();
+    if (formats.includes('qr_code')){
+      nativeDetector = new BarcodeDetector({formats: ['qr_code']});
+      detectorEngine = 'native';
+    }
+  }catch(e){
+    nativeDetector = null;
+    detectorEngine = 'jsQR';
+  }
+}
+
+recvToggle.onclick = () => { stream ? stopReceiving() : startReceiving(); };
+
+async function startReceiving(){
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  }catch(err){
+    showErr('Camera access denied or unavailable: ' + err.message);
+    return;
+  }
+  recvVideo.srcObject = stream;
+  await recvVideo.play();
+  await initDetector();
+  recvBadge.textContent = 'scanning · ' + detectorEngine;
+  recvSweep.classList.add('active');
+  recvToggle.textContent = 'Stop camera';
+  recvToggle.classList.add('btn-stop');
+  scanStartTime = performance.now();
+  detectedGrid = null;
+  lastProcessTime = 0;
+  scanLoop();
+}
+
+function stopReceiving(){
+  if (scanLoopId) cancelAnimationFrame(scanLoopId);
+  scanLoopId = null;
+  if (stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+  recvBadge.textContent = 'camera off';
+  recvSweep.classList.remove('active');
+  recvToggle.textContent = 'Start camera';
+  recvToggle.classList.remove('btn-stop');
+}
+
+function scanLoop(){
+  scanLoopId = requestAnimationFrame(scanLoop);
+  const now = performance.now();
+  if (now - lastProcessTime < MIN_PROCESS_INTERVAL_MS) return;
+  lastProcessTime = now;
+  if (recvVideo.readyState !== recvVideo.HAVE_ENOUGH_DATA) return;
+
+  if (nativeDetector){
+    scanWithNativeDetector();
+  } else {
+    scanWithJsQR();
+  }
+}
+
+// Native path: one detect() call returns every QR code visible in the frame,
+// at any grid layout, with no need to know or guess where the cells are.
+let nativeDetectBusy = false;
+function scanWithNativeDetector(){
+  if (nativeDetectBusy) return;
+  nativeDetectBusy = true;
+  nativeDetector.detect(recvVideo).then(results => {
+    for (const r of results){ if (r.rawValue) handleScanned(r.rawValue); }
+  }).catch(() => { /* transient detector failure -- next frame will retry */ })
+    .finally(() => { nativeDetectBusy = false; });
+}
+
+// Fallback path: crop the captured frame into a candidate N×N grid and run
+// jsQR on each cell. Used only when the browser has no native detector.
+function scanWithJsQR(){
+  const w = recvVideo.videoWidth, h = recvVideo.videoHeight;
+  if (!w || !h) return;
+  recvOverlay.width = w; recvOverlay.height = h;
+  const ctx = recvOverlay.getContext('2d');
+  ctx.drawImage(recvVideo, 0, 0, w, h);
+
+  if (detectedGrid === null){
+    for (const g of [1, 2, 3]){
+      if (tryScanGrid(ctx, w, h, g)) return;
+    }
+  } else {
+    tryScanGrid(ctx, w, h, detectedGrid);
+  }
+}
+
+// Scans every cell of an N×N hypothesis grid; returns true if any cell decoded.
+function tryScanGrid(ctx, w, h, grid){
+  const cellW = w / grid, cellH = h / grid;
+  let found = false;
+  for (let row = 0; row < grid; row++){
+    for (let col = 0; col < grid; col++){
+      const imageData = ctx.getImageData(Math.floor(col*cellW), Math.floor(row*cellH), Math.floor(cellW), Math.floor(cellH));
+      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+      if (code && code.data){
+        handleScanned(code.data);
+        found = true;
+      }
+    }
+  }
+  return found;
+}
+
+function handleScanned(text){
+  let bytes;
+  try{ bytes = base64ToBytes(text); } catch(e){ return; }
+  const pkt = parsePacket(bytes);
+  if (!pkt) return;
+
+  if (detectedGrid === null){
+    detectedGrid = pkt.gridSize;
+    log('locked grid layout: ' + detectedGrid + ' × ' + detectedGrid);
+  }
+
+  if (complete && pkt.fileId === currentFileId) return;
+
+  if (pkt.fileId !== currentFileId){
+    // new transfer session detected
+    currentFileId = pkt.fileId;
+    decoder = new FountainDecoder(pkt.K, pkt.blockSize, pkt.fileSize, pkt.filename, pkt.fileCRC32);
+    complete = false;
+    symbolsAtStart = 0;
+    scanStartTime = performance.now();
+    statFile.textContent = pkt.filename;
+    statSize.textContent = (pkt.fileSize/1024).toFixed(1) + ' KB';
+    recvBannerOk.classList.remove('show');
+    recvBannerErr.classList.remove('show');
+    log('new session · ' + pkt.filename + ' · K=' + pkt.K);
+  }
+
+  const indices = pickIndices(decoder.K, pkt.seed);
+  const result = decoder.addSymbol(pkt.seed, indices, pkt.payload);
+
+  if (result === 'new') log('block solved: ' + decoder.solved + ' / ' + decoder.K);
+
+  recvFrameCount.textContent = decoder.symbolsReceived.toLocaleString() + ' symbols';
+  const elapsed = (performance.now() - scanStartTime) / 1000;
+  const kb = (decoder.symbolsReceived * (decoder.blockSize+24)) / 1024;
+  recvThroughput.textContent = (elapsed > 0 ? kb/elapsed : 0).toFixed(1) + ' KB/s';
+
+  statSolved.textContent = decoder.solved + ' / ' + decoder.K;
+  const pct = decoder.K ? (decoder.solved/decoder.K*100) : 0;
+  recvProgress.style.width = pct + '%';
+  const overhead = decoder.symbolsReceived > decoder.solved
+    ? (((decoder.symbolsReceived - decoder.solved)/Math.max(1,decoder.solved))*100) : 0;
+  statRedundancy.textContent = overhead.toFixed(0) + '%';
+
+  if (!complete && decoder.isComplete()){
+    complete = true;
+    finishTransfer();
+  }
+}
+
+function finishTransfer(){
+  const fileBytes = decoder.assemble();
+  complete = true; // decoder has all K blocks either way -- stop re-triggering on further symbols
+  if (!decoder.verifyIntegrity(fileBytes)){
+    recvBadge.textContent = 'integrity error';
+    recvSweep.classList.remove('active');
+    log('CRC32 mismatch on reassembled file — decode failed');
+    showErr('All blocks arrived but the reassembled file failed its integrity check. This points to a decode bug rather than missing data — restart the sender broadcast to retry.');
+    return;
+  }
+  recvBadge.textContent = 'complete';
+  recvSweep.classList.remove('active');
+  const blob = new Blob([fileBytes]);
+  const url = URL.createObjectURL(blob);
+  downloadLink.href = url;
+  downloadLink.download = decoder.filename || 'received_file';
+  recvOkText.textContent = 'Transfer complete & verified — ' + decoder.filename;
+  recvBannerOk.classList.add('show');
+  log('CRC32 verified · reconstruction complete · downloading');
+  downloadLink.click();
+}
+
+function log(msg){
+  const line = document.createElement('div');
+  line.textContent = '› ' + msg;
+  recvLog.prepend(line);
+  while (recvLog.children.length > 12) recvLog.removeChild(recvLog.lastChild);
+}
+function showErr(msg){
+  recvErrText.textContent = msg;
+  recvBannerErr.classList.add('show');
+}
+</script>
+</body>
+</html>
