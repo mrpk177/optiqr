@@ -75,6 +75,11 @@
   .field label span.val{font-family:var(--mono);color:var(--signal);}
   input[type=range]{width:100%;accent-color:var(--signal);}
 
+  .preset-row{display:flex;gap:6px;}
+  .preset-btn{flex:1;padding:9px 6px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);
+    color:var(--muted);font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;cursor:pointer;}
+  .preset-btn.active{border-color:var(--signal-dim);color:var(--signal);background:rgba(38,240,176,.08);}
+
   /* ---------- buttons ---------- */
   .btn{width:100%;padding:14px;border-radius:10px;border:none;font-family:var(--mono);font-size:13px;
     letter-spacing:.08em;text-transform:uppercase;cursor:pointer;font-weight:600;}
@@ -171,9 +176,19 @@
       </div>
       <input type="file" id="fileInput">
 
+      <div class="field" style="margin-top:16px;">
+        <label>Preset</label>
+        <div class="preset-row" id="presetRow">
+          <button class="preset-btn" data-preset="reliable">Reliable</button>
+          <button class="preset-btn active" data-preset="balanced">Balanced</button>
+          <button class="preset-btn" data-preset="fast">Fast</button>
+        </div>
+        <div class="drop-sub" id="presetHint" style="margin-top:6px;">2×2 grid · 380 B blocks · 12 fps · ECL M — good default for most phones</div>
+      </div>
+
       <div class="field">
-        <label>Block payload <span class="val" id="blockSizeVal">350 B</span></label>
-        <input type="range" id="blockSizeSlider" min="120" max="900" step="10" value="350">
+        <label>Block payload <span class="val" id="blockSizeVal">380 B</span></label>
+        <input type="range" id="blockSizeSlider" min="120" max="900" step="10" value="380">
       </div>
       <div class="field">
         <label>Frame rate <span class="val" id="fpsVal">12 fps</span></label>
@@ -621,13 +636,56 @@ let frameCounter = 0;
 let sendStartTime = 0;
 let bytesEmittedSinceStart = 0;
 
-blockSizeSlider.oninput = () => { blockSize = parseInt(blockSizeSlider.value,10); blockSizeVal.textContent = blockSize + ' B'; if (selectedFile) prepareFile(); };
-fpsSlider.oninput = () => { fpsVal.textContent = fpsSlider.value + ' fps'; if (sendTimer) restartLoop(); };
-eclSlider.oninput = () => { eclVal.textContent = ECL[eclSlider.value]; };
+blockSizeSlider.oninput = () => { blockSize = parseInt(blockSizeSlider.value,10); blockSizeVal.textContent = blockSize + ' B'; if (selectedFile) prepareFile(); clearPresetActive(); };
+fpsSlider.oninput = () => { fpsVal.textContent = fpsSlider.value + ' fps'; if (sendTimer) restartLoop(); clearPresetActive(); };
+eclSlider.oninput = () => { eclVal.textContent = ECL[eclSlider.value]; clearPresetActive(); };
 gridSlider.oninput = () => {
   const g = parseInt(gridSlider.value,10);
   gridVal.textContent = g + ' × ' + g + ' — ' + (g*g) + ' code' + (g*g>1?'s':'');
+  clearPresetActive();
 };
+
+/* =========================================================================
+   PRESETS
+   The receiver's scan throttle caps out around 18fps (MIN_PROCESS_INTERVAL_MS
+   = 55ms), so sender fps well beyond that mostly shows frames the camera
+   never gets a clean read on -- not free throughput. Per-frame header
+   overhead is now fixed at ~29 + filename bytes regardless of block size
+   (systematic + CRC32 fields), so very small blocks waste a larger share of
+   every frame on header rather than payload. Grid size is the main lever
+   for legibility: each step up quarters/ninths the screen area per code, so
+   it needs a real camera + steady hands to pay off.
+   ========================================================================= */
+
+const PRESETS = {
+  reliable: { grid:1, block:300, fps:8,  ecl:2, hint:'1×1 · 300 B blocks · 8 fps · ECL Q — start here if grid mode is struggling on your hardware' },
+  balanced: { grid:2, block:380, fps:12, ecl:1, hint:'2×2 grid · 380 B blocks · 12 fps · ECL M — good default for most phones' },
+  fast:     { grid:3, block:550, fps:16, ecl:0, hint:'3×3 grid · 550 B blocks · 16 fps · ECL L — only after Balanced is scanning cleanly; needs a steady hand and good light' },
+};
+
+function clearPresetActive(){
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+}
+
+function applyPreset(name){
+  const p = PRESETS[name];
+  if (!p) return;
+  gridSlider.value = p.grid;
+  gridSlider.dispatchEvent(new Event('input'));
+  blockSizeSlider.value = p.block;
+  blockSizeSlider.dispatchEvent(new Event('input'));
+  fpsSlider.value = p.fps;
+  fpsSlider.dispatchEvent(new Event('input'));
+  eclSlider.value = p.ecl;
+  eclSlider.dispatchEvent(new Event('input'));
+  clearPresetActive();
+  document.querySelector(`.preset-btn[data-preset="${name}"]`).classList.add('active');
+  document.getElementById('presetHint').textContent = p.hint;
+}
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.onclick = () => applyPreset(btn.dataset.preset);
+});
 
 dropZone.onclick = () => fileInput.click();
 fileInput.onchange = (e) => {
