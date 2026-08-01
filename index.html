@@ -23,8 +23,17 @@
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);
-    min-height:100vh;overscroll-behavior:none;}
+    min-height:100vh;overscroll-behavior:none;transition:background .25s ease, color .25s ease;}
   body{display:flex;flex-direction:column;align-items:stretch;}
+
+  /* ---------- theme picker ---------- */
+  .theme-row{display:flex;gap:9px;overflow-x:auto;padding:4px 20px 2px;}
+  .theme-row::-webkit-scrollbar{display:none;}
+  .theme-chip{width:24px;height:24px;border-radius:50%;flex:0 0 auto;cursor:pointer;
+    border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.15);
+    transition:transform .12s ease, border-color .12s ease;}
+  .theme-chip:active{transform:scale(0.9);}
+  .theme-chip.active{border-color:var(--text);}
 
   /* ---------- top bar ---------- */
   header{padding:18px 20px 14px;border-bottom:1px solid var(--line);}
@@ -78,7 +87,7 @@
     border:1px solid var(--line);}
   .stage canvas, .stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
     background:#fff;}
-  #recvVideo{object-fit:cover;background:#000;}
+  #recvVideo{object-fit:contain;background:#000;}
   .reticle{position:absolute;inset:14px;pointer-events:none;}
   .reticle::before,.reticle::after,.reticle .r2,.reticle .r3{content:'';position:absolute;width:22px;height:22px;
     border-color:var(--signal);}
@@ -96,6 +105,17 @@
     font-family:var(--mono);font-size:10.5px;color:var(--signal);text-shadow:0 1px 4px #000;pointer-events:none;}
   .hud-badge{position:absolute;top:10px;right:10px;font-family:var(--mono);font-size:10px;padding:3px 7px;
     border-radius:4px;background:rgba(0,0,0,.55);color:var(--muted);}
+  .wake-badge{position:absolute;top:10px;left:10px;font-family:var(--mono);font-size:10px;padding:3px 7px;
+    border-radius:4px;background:rgba(0,0,0,.55);color:var(--signal);display:none;align-items:center;gap:4px;}
+  .wake-badge.on{display:flex;}
+  .wake-badge .dot{width:5px;height:5px;border-radius:50%;background:var(--signal);}
+
+  #recvHeatmap{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+
+  .save-btn{width:100%;padding:13px;border-radius:10px;border:1.5px solid var(--signal-dim);
+    background:transparent;color:var(--signal);font-family:var(--mono);font-size:12.5px;
+    letter-spacing:.06em;text-transform:uppercase;cursor:pointer;margin-top:10px;display:none;}
+  .save-btn.show{display:block;}
 
   /* ---------- stats ---------- */
   .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
@@ -130,6 +150,8 @@
   </div>
   <div class="brand-sub">screen → camera · systematic fountain coding · CRC32-verified · no network required</div>
 </header>
+
+<div class="theme-row" id="themeRow"></div>
 
 <div class="switch">
   <button id="tabSend" class="active">Send</button>
@@ -175,6 +197,7 @@
         <div class="reticle"><div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div></div>
         <div class="sweep" id="sendSweep"></div>
         <div class="hud-badge" id="sendBadge">idle</div>
+        <div class="wake-badge" id="sendWakeBadge"><span class="dot"></span>screen locked awake</div>
         <div class="hud"><span id="sendFrameCount">frame 0</span><span id="sendThroughput">0 KB/s</span></div>
       </div>
 
@@ -195,9 +218,11 @@
       <div class="stage">
         <video id="recvVideo" autoplay playsinline muted></video>
         <canvas id="recvOverlay" style="display:none;"></canvas>
+        <canvas id="recvHeatmap"></canvas>
         <div class="reticle"><div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div></div>
         <div class="sweep" id="recvSweep"></div>
         <div class="hud-badge" id="recvBadge">camera off</div>
+        <div class="wake-badge" id="recvWakeBadge"><span class="dot"></span>screen locked awake</div>
         <div class="hud"><span id="recvFrameCount">0 symbols</span><span id="recvThroughput">0 KB/s</span></div>
       </div>
       <button class="btn btn-primary" id="recvToggle" style="margin-top:14px;">Start camera</button>
@@ -218,6 +243,7 @@
 
       <div class="log" id="recvLog" style="margin-top:12px;">waiting for first frame…</div>
 
+      <button class="save-btn" id="manualSaveBtn">Save file</button>
       <a class="download-link" id="downloadLink"></a>
     </div>
   </div>
@@ -450,6 +476,103 @@ class FountainDecoder{
 }
 
 /* =========================================================================
+   THEMES
+   UI chrome only -- the QR modules themselves always render pure black on
+   white regardless of theme, since scan reliability depends on maximum
+   contrast. Persisted to localStorage since this is a real hosted page now,
+   not a sandboxed artifact.
+   ========================================================================= */
+
+const THEMES = {
+  signal:    { label: 'Signal',    bg:'#090C11', surface:'#121822', surface2:'#1A2230', line:'#232D3D', text:'#E8ECF3', muted:'#7C8AA0', signal:'#26F0B0', signalDim:'#0F5C48', alert:'#FF3D6E' },
+  nightshade:{ label: 'Nightshade',bg:'#0D0A17', surface:'#16101F', surface2:'#201730', line:'#2E2044', text:'#ECE7F5', muted:'#8B7FA3', signal:'#B968FF', signalDim:'#4A1B70', alert:'#FF4D8D' },
+  ops:       { label: 'Ops',       bg:'#0C0C0D', surface:'#161616', surface2:'#1F1F1F', line:'#2B2B2B', text:'#ECECEC', muted:'#8A8A8A', signal:'#FF8A3D', signalDim:'#7A3A10', alert:'#FF4136' },
+  solarized: { label: 'Solarized', bg:'#001B26', surface:'#002B36', surface2:'#073642', line:'#0F4A5C', text:'#93A1A1', muted:'#586E75', signal:'#2AA198', signalDim:'#164541', alert:'#DC322F' },
+  deepsea:   { label: 'Deep Sea',  bg:'#05121C', surface:'#0B1F2E', surface2:'#123044', line:'#1C4258', text:'#E4F1F7', muted:'#6F93A6', signal:'#35C7EA', signalDim:'#114A5C', alert:'#FF5470' },
+  forest:    { label: 'Forest',    bg:'#0A1410', surface:'#12201A', surface2:'#1A2E24', line:'#26402F', text:'#E5F2E8', muted:'#7FA08C', signal:'#6FE07A', signalDim:'#1F5C2A', alert:'#FF5D5D' },
+  ember:     { label: 'Ember',     bg:'#150E0A', surface:'#201510', surface2:'#2C1D15', line:'#3D2A1E', text:'#F5E9DE', muted:'#A68A73', signal:'#FF7A45', signalDim:'#7A2E13', alert:'#FF3B3B' },
+  blueprint: { label: 'Blueprint', bg:'#071427', surface:'#0D1F3C', surface2:'#12294D', line:'#1E3A63', text:'#DCEBFF', muted:'#6E8FBF', signal:'#5FA8FF', signalDim:'#1E4D8C', alert:'#FF6584' },
+  mononoir:  { label: 'Mono Noir', bg:'#050505', surface:'#111111', surface2:'#1B1B1B', line:'#2A2A2A', text:'#F5F5F5', muted:'#8C8C8C', signal:'#FFFFFF', signalDim:'#4D4D4D', alert:'#FF3B3B' },
+  daylight:  { label: 'Daylight',  bg:'#F5F3EE', surface:'#FFFFFF', surface2:'#ECE8DF', line:'#DDD7C9', text:'#1B1B18', muted:'#6B6558', signal:'#0F7A5C', signalDim:'#CDEEE1', alert:'#C0392B' },
+};
+
+function applyTheme(name){
+  const t = THEMES[name] || THEMES.signal;
+  const root = document.documentElement.style;
+  root.setProperty('--bg', t.bg);
+  root.setProperty('--surface', t.surface);
+  root.setProperty('--surface-2', t.surface2);
+  root.setProperty('--line', t.line);
+  root.setProperty('--text', t.text);
+  root.setProperty('--muted', t.muted);
+  root.setProperty('--signal', t.signal);
+  root.setProperty('--signal-dim', t.signalDim);
+  root.setProperty('--alert', t.alert);
+  document.querySelectorAll('.theme-chip').forEach(chip => {
+    chip.classList.toggle('active', chip.dataset.theme === name);
+  });
+  try{ localStorage.setItem('optiqr-theme', name); }catch(e){ /* storage unavailable, non-fatal */ }
+}
+
+function initThemePicker(){
+  const row = document.getElementById('themeRow');
+  Object.keys(THEMES).forEach(key => {
+    const chip = document.createElement('div');
+    chip.className = 'theme-chip';
+    chip.dataset.theme = key;
+    chip.title = THEMES[key].label;
+    chip.style.background = THEMES[key].signal;
+    chip.onclick = () => applyTheme(key);
+    row.appendChild(chip);
+  });
+  let saved = 'signal';
+  try{ saved = localStorage.getItem('optiqr-theme') || 'signal'; }catch(e){ /* ignore */ }
+  applyTheme(THEMES[saved] ? saved : 'signal');
+}
+initThemePicker();
+
+/* =========================================================================
+   WAKE LOCK
+   Keeps the screen from dimming/locking mid-transfer on both sides -- a
+   dimmed sender screen or a locked receiver screen both silently kill an
+   optical transfer, and it's a common real-world failure mode for this
+   category of tool. Re-acquired on visibilitychange since the browser
+   releases it automatically when the tab goes to the background.
+   ========================================================================= */
+
+let wakeLock = null;
+let wakeLockBadgeEls = [];
+
+async function acquireWakeLock(badgeEls){
+  wakeLockBadgeEls = badgeEls || [];
+  if (!('wakeLock' in navigator)) return;
+  try{
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLockBadgeEls.forEach(el => el.classList.add('on'));
+    wakeLock.addEventListener('release', () => {
+      wakeLock = null;
+      wakeLockBadgeEls.forEach(el => el.classList.remove('on'));
+    });
+  }catch(e){
+    // Denied (e.g. low battery / power saver) -- non-fatal, just no badge.
+    wakeLock = null;
+  }
+}
+
+function releaseWakeLock(){
+  if (wakeLock){ wakeLock.release().catch(() => {}); }
+  wakeLock = null;
+  wakeLockBadgeEls.forEach(el => el.classList.remove('on'));
+  wakeLockBadgeEls = [];
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && wakeLockBadgeEls.length && !wakeLock){
+    acquireWakeLock(wakeLockBadgeEls);
+  }
+});
+
+/* =========================================================================
    UI: tab switching
    ========================================================================= */
 
@@ -552,6 +675,7 @@ function startSending(){
   sendSweep.classList.add('active');
   sendToggle.textContent = 'Stop broadcast';
   sendToggle.classList.add('btn-stop');
+  acquireWakeLock([document.getElementById('sendWakeBadge')]);
   restartLoop();
 }
 
@@ -567,6 +691,7 @@ function stopSending(){
   sendSweep.classList.remove('active');
   sendToggle.textContent = 'Start broadcast';
   sendToggle.classList.remove('btn-stop');
+  releaseWakeLock();
 }
 
 let symbolsSentTotal = 0;
@@ -659,6 +784,7 @@ const recvBannerErr = document.getElementById('recvBannerErr');
 const recvOkText = document.getElementById('recvOkText');
 const recvErrText = document.getElementById('recvErrText');
 const downloadLink = document.getElementById('downloadLink');
+const manualSaveBtn = document.getElementById('manualSaveBtn');
 
 let stream = null;
 let scanLoopId = null;
@@ -672,6 +798,8 @@ let lastProcessTime = 0;
 const MIN_PROCESS_INTERVAL_MS = 55; // throttle jsQR work regardless of grid size
 let nativeDetector = null; // set if the browser exposes a hardware-accelerated QR detector
 let detectorEngine = 'jsQR';
+let noSignalTimer = null;
+let firstDecodeSeen = false;
 
 async function initDetector(){
   nativeDetector = null;
@@ -693,11 +821,30 @@ recvToggle.onclick = () => { stream ? stopReceiving() : startReceiving(); };
 
 async function startReceiving(){
   try{
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      }
+    });
   }catch(err){
     showErr('Camera access denied or unavailable: ' + err.message);
     return;
   }
+
+  // Best-effort: request continuous autofocus if the device exposes control
+  // over it. Without this some phones can settle on a fixed focus distance
+  // that's wrong for a screen held a few inches away, and scans just fail
+  // silently with no error to show for it.
+  try{
+    const track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (caps.focusMode && caps.focusMode.includes('continuous')){
+      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+    }
+  }catch(e){ /* not supported on this device -- non-fatal */ }
+
   recvVideo.srcObject = stream;
   await recvVideo.play();
   await initDetector();
@@ -708,6 +855,12 @@ async function startReceiving(){
   scanStartTime = performance.now();
   detectedGrid = null;
   lastProcessTime = 0;
+  firstDecodeSeen = false;
+  acquireWakeLock([document.getElementById('recvWakeBadge')]);
+  if (noSignalTimer) clearTimeout(noSignalTimer);
+  noSignalTimer = setTimeout(() => {
+    if (!firstDecodeSeen) log('no codes read yet — hold the phone steadier, closer, or ask the sender to reduce grid size');
+  }, 8000);
   scanLoop();
 }
 
@@ -719,6 +872,8 @@ function stopReceiving(){
   recvSweep.classList.remove('active');
   recvToggle.textContent = 'Start camera';
   recvToggle.classList.remove('btn-stop');
+  releaseWakeLock();
+  if (noSignalTimer){ clearTimeout(noSignalTimer); noSignalTimer = null; }
 }
 
 function scanLoop(){
@@ -735,6 +890,69 @@ function scanLoop(){
   }
 }
 
+/* =========================================================================
+   DECODE HEATMAP
+   Draws a brief flash over wherever a QR code was just successfully read,
+   mapped from the video's native pixel space into the video element's
+   displayed (object-fit: contain) rectangle. Gives the person real-time
+   feedback on which part of the frame is actually being read -- useful for
+   knowing which way to nudge the phone when only some grid cells decode.
+   ========================================================================= */
+
+let heatmapFlashes = [];
+
+function registerHeatmapFlash(box){
+  const vw = recvVideo.videoWidth, vh = recvVideo.videoHeight;
+  if (!vw || !vh) return;
+  heatmapFlashes.push({
+    nx: box.x / vw, ny: box.y / vh, nw: box.width / vw, nh: box.height / vh,
+    t: performance.now()
+  });
+  if (heatmapFlashes.length > 60) heatmapFlashes.shift();
+}
+
+function getVideoDisplayRect(video){
+  const elW = video.clientWidth, elH = video.clientHeight;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh || !elW || !elH) return {x:0, y:0, w:elW, h:elH};
+  const elRatio = elW/elH, vRatio = vw/vh;
+  let dw, dh;
+  if (vRatio > elRatio){ dw = elW; dh = elW/vRatio; } else { dh = elH; dw = elH*vRatio; }
+  return {x:(elW-dw)/2, y:(elH-dh)/2, w:dw, h:dh};
+}
+
+function hexToRgba(hex, alpha){
+  const h = hex.replace('#','').trim();
+  const full = h.length === 3 ? h.split('').map(c => c+c).join('') : h;
+  const n = parseInt(full, 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${alpha})`;
+}
+
+function renderHeatmap(){
+  requestAnimationFrame(renderHeatmap);
+  const canvas = document.getElementById('recvHeatmap');
+  if (!canvas || !canvas.clientWidth) return;
+  if (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight){
+    canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!stream || !heatmapFlashes.length) return;
+
+  const rect = getVideoDisplayRect(recvVideo);
+  const now = performance.now();
+  const FADE_MS = 500;
+  heatmapFlashes = heatmapFlashes.filter(f => now - f.t < FADE_MS);
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--signal').trim() || '#26F0B0';
+  for (const f of heatmapFlashes){
+    const alpha = 1 - (now - f.t) / FADE_MS;
+    ctx.strokeStyle = hexToRgba(color, alpha);
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(rect.x + f.nx*rect.w, rect.y + f.ny*rect.h, f.nw*rect.w, f.nh*rect.h);
+  }
+}
+renderHeatmap();
+
 // Native path: one detect() call returns every QR code visible in the frame,
 // at any grid layout, with no need to know or guess where the cells are.
 let nativeDetectBusy = false;
@@ -742,7 +960,9 @@ function scanWithNativeDetector(){
   if (nativeDetectBusy) return;
   nativeDetectBusy = true;
   nativeDetector.detect(recvVideo).then(results => {
-    for (const r of results){ if (r.rawValue) handleScanned(r.rawValue); }
+    for (const r of results){
+      if (r.rawValue) handleScanned(r.rawValue, r.boundingBox || null);
+    }
   }).catch(() => { /* transient detector failure -- next frame will retry */ })
     .finally(() => { nativeDetectBusy = false; });
 }
@@ -771,10 +991,16 @@ function tryScanGrid(ctx, w, h, grid){
   let found = false;
   for (let row = 0; row < grid; row++){
     for (let col = 0; col < grid; col++){
-      const imageData = ctx.getImageData(Math.floor(col*cellW), Math.floor(row*cellH), Math.floor(cellW), Math.floor(cellH));
+      const ox = Math.floor(col*cellW), oy = Math.floor(row*cellH);
+      const imageData = ctx.getImageData(ox, oy, Math.floor(cellW), Math.floor(cellH));
       const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
       if (code && code.data){
-        handleScanned(code.data);
+        const loc = code.location;
+        const xs = [loc.topLeftCorner.x, loc.topRightCorner.x, loc.bottomLeftCorner.x, loc.bottomRightCorner.x];
+        const ys = [loc.topLeftCorner.y, loc.topRightCorner.y, loc.bottomLeftCorner.y, loc.bottomRightCorner.y];
+        const bx = Math.min(...xs) + ox, by = Math.min(...ys) + oy;
+        const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+        handleScanned(code.data, {x: bx, y: by, width: bw, height: bh});
         found = true;
       }
     }
@@ -782,7 +1008,10 @@ function tryScanGrid(ctx, w, h, grid){
   return found;
 }
 
-function handleScanned(text){
+function handleScanned(text, box){
+  firstDecodeSeen = true;
+  if (box) registerHeatmapFlash(box);
+
   let bytes;
   try{ bytes = base64ToBytes(text); } catch(e){ return; }
   const pkt = parsePacket(bytes);
@@ -806,6 +1035,7 @@ function handleScanned(text){
     statSize.textContent = (pkt.fileSize/1024).toFixed(1) + ' KB';
     recvBannerOk.classList.remove('show');
     recvBannerErr.classList.remove('show');
+    manualSaveBtn.classList.remove('show');
     log('new session · ' + pkt.filename + ' · K=' + pkt.K);
   }
 
@@ -840,6 +1070,7 @@ function finishTransfer(){
     recvSweep.classList.remove('active');
     log('CRC32 mismatch on reassembled file — decode failed');
     showErr('All blocks arrived but the reassembled file failed its integrity check. This points to a decode bug rather than missing data — restart the sender broadcast to retry.');
+    if (navigator.vibrate) navigator.vibrate([80, 60, 80, 60, 80]);
     return;
   }
   recvBadge.textContent = 'complete';
@@ -848,10 +1079,19 @@ function finishTransfer(){
   const url = URL.createObjectURL(blob);
   downloadLink.href = url;
   downloadLink.download = decoder.filename || 'received_file';
+
+  // Manual button as the reliable path -- some mobile browsers restrict
+  // programmatic downloads triggered outside a direct user gesture, so the
+  // auto-click below is a nice-to-have, not the only way to get the file.
+  manualSaveBtn.classList.add('show');
+  manualSaveBtn.onclick = () => downloadLink.click();
+
   recvOkText.textContent = 'Transfer complete & verified — ' + decoder.filename;
   recvBannerOk.classList.add('show');
-  log('CRC32 verified · reconstruction complete · downloading');
-  downloadLink.click();
+  log('CRC32 verified · reconstruction complete');
+  if (navigator.vibrate) navigator.vibrate(200);
+  releaseWakeLock(); // screen no longer needs to stay awake for scanning
+  try{ downloadLink.click(); }catch(e){ /* manual button covers this */ }
 }
 
 function log(msg){
