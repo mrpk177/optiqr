@@ -118,7 +118,7 @@
   .wake-badge.on{display:flex;}
   .wake-badge .dot{width:5px;height:5px;border-radius:50%;background:var(--signal);}
 
-  #recvHeatmap{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+  #recvHeatmap{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;background:transparent;}
 
   .save-btn{width:100%;padding:13px;border-radius:10px;border:1.5px solid var(--signal-dim);
     background:transparent;color:var(--signal);font-family:var(--mono);font-size:12.5px;
@@ -235,7 +235,7 @@
       <h2>Camera</h2>
       <div class="stage">
         <video id="recvVideo" autoplay playsinline muted></video>
-        <canvas id="recvOverlay" style="display:none;"></canvas>
+        <canvas id="recvOverlay" style="display:none;background:transparent;"></canvas>
         <canvas id="recvHeatmap"></canvas>
         <div class="reticle"><div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div></div>
         <div class="sweep" id="recvSweep"></div>
@@ -268,7 +268,7 @@
 
 </main>
 
-<footer>fountain-coded optical transfer · runs entirely in-browser · no data leaves the two devices<br><span style="opacity:.5">build v7 · camera-watchdog · if this doesn't say v7, you're on a cached copy — hard refresh</span></footer>
+<footer>fountain-coded optical transfer · runs entirely in-browser · no data leaves the two devices<br><span style="opacity:.5">build v8 · fixed heatmap-canvas-covering-video bug · if this doesn't say v8, you're on a cached copy — hard refresh</span></footer>
 
 <script>
 /* =========================================================================
