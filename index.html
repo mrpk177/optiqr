@@ -943,6 +943,7 @@ let nativeDetector = null; // set if the browser exposes a hardware-accelerated 
 let detectorEngine = 'jsQR';
 let noSignalTimer = null;
 let firstDecodeSeen = false;
+let watchdogRunId = 0;
 
 async function initDetector(){
   nativeDetector = null;
@@ -963,23 +964,26 @@ async function initDetector(){
 recvToggle.onclick = () => { stream ? stopReceiving() : startReceiving(); };
 
 async function startReceiving(){
+  // Simple constraints first -- this is what was confirmed working before.
+  // Overly strict "ideal" resolution constraints are a known cause of
+  // frozen/blank video on some Android camera stacks, even though the
+  // getUserMedia() promise still resolves normally, so there's no error to
+  // catch. If this still produces a blank feed, the watchdog below falls
+  // back automatically to the most minimal possible constraints.
+  async function tryGetStream(constraints){
+    return await navigator.mediaDevices.getUserMedia({ video: constraints });
+  }
+
   try{
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'environment',
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      }
-    });
+    stream = await tryGetStream({ facingMode: 'environment' });
   }catch(err){
     showErr('Camera access denied or unavailable: ' + err.message);
     return;
   }
 
   // Best-effort: request continuous autofocus if the device exposes control
-  // over it. Without this some phones can settle on a fixed focus distance
-  // that's wrong for a screen held a few inches away, and scans just fail
-  // silently with no error to show for it.
+  // over it. Wrapped so a failure here can never block the camera from
+  // starting.
   try{
     const track = stream.getVideoTracks()[0];
     const caps = track.getCapabilities ? track.getCapabilities() : {};
@@ -1005,6 +1009,55 @@ async function startReceiving(){
     if (!firstDecodeSeen) log('no codes read yet — hold the phone steadier, closer, or ask the sender to reduce grid size');
   }, 8000);
   scanLoop();
+
+  // Frame-liveness watchdog: catches the case where getUserMedia() resolves
+  // and play() succeeds, but the actual video buffer never receives real
+  // frames (renders as a flat color, most often solid white or black) --
+  // this can happen silently with no error anywhere in the promise chain.
+  watchdogFrameLiveness();
+}
+
+async function watchdogFrameLiveness(){
+  const runId = ++watchdogRunId;
+  await new Promise(r => setTimeout(r, 2500));
+  if (runId !== watchdogRunId || !stream) return; // stopped/restarted meanwhile
+
+  const w = recvVideo.videoWidth, h = recvVideo.videoHeight;
+  if (!w || !h){
+    log('camera stream never delivered a frame — retrying with minimal constraints');
+    await restartWithFallbackConstraints();
+    return;
+  }
+
+  // Sample a handful of pixels; if every sample is (near-)identical, the
+  // buffer is very likely frozen/blank rather than showing a live scene.
+  const testCanvas = document.createElement('canvas');
+  testCanvas.width = 16; testCanvas.height = 16;
+  const tctx = testCanvas.getContext('2d');
+  tctx.drawImage(recvVideo, 0, 0, 16, 16);
+  const px = tctx.getImageData(0, 0, 16, 16).data;
+  let allSame = true;
+  for (let i = 4; i < px.length; i += 4){
+    if (Math.abs(px[i]-px[0]) > 6 || Math.abs(px[i+1]-px[1]) > 6 || Math.abs(px[i+2]-px[2]) > 6){
+      allSame = false; break;
+    }
+  }
+  if (allSame){
+    log('camera feed looks frozen/blank (uniform color across the whole frame) — retrying with minimal constraints');
+    await restartWithFallbackConstraints();
+  }
+}
+
+async function restartWithFallbackConstraints(){
+  if (stream){ stream.getTracks().forEach(t => t.stop()); }
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video: true }); // most minimal possible request
+    recvVideo.srcObject = stream;
+    await recvVideo.play();
+    log('retried with minimal camera constraints — if the feed is still blank, this is likely a device/OS-level camera permission or hardware issue rather than something in the page');
+  }catch(err){
+    showErr('Camera retry also failed: ' + err.message + '. Try fully closing and reopening the browser, or check the phone\'s system camera permission for this browser.');
+  }
 }
 
 function stopReceiving(){
